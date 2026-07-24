@@ -148,3 +148,16 @@ body {
   background: #93c5fd;
   cursor: not-allowed;
 }
+
+.task-card {
+  cursor: grab;
+  touch-action: none;
+}
+
+.task-card:active {
+  cursor: grabbing;
+}
+
+.column-over {
+  background: #dbeafe;
+}
