@@ -26,7 +26,19 @@ const COLUMNS = [
   { id: 'done', title: 'Done' },
 ];
 
-// A single draggable task card
+// Returns 'overdue' | 'soon' | null based on due_date
+function getDueStatus(dueDate: string | null, status: string): 'overdue' | 'soon' | null {
+  if (!dueDate || status === 'done') return null;
+  const due = new Date(dueDate);
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const diffDays = Math.round((due.getTime() - today.getTime()) / 86400000);
+
+  if (diffDays < 0) return 'overdue';
+  if (diffDays <= 2) return 'soon';
+  return null;
+}
+
 function TaskCard({ task }: { task: Task }) {
   const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({
     id: task.id,
@@ -40,25 +52,25 @@ function TaskCard({ task }: { task: Task }) {
       }
     : undefined;
 
+  const dueStatus = getDueStatus(task.due_date, task.status);
+
   return (
-    <div
-      ref={setNodeRef}
-      style={style}
-      {...listeners}
-      {...attributes}
-      className="task-card"
-    >
+    <div ref={setNodeRef} style={style} {...listeners} {...attributes} className="task-card">
       <p className="task-title">{task.title}</p>
-      {task.priority && (
-        <span className={`priority-badge priority-${task.priority}`}>
-          {task.priority}
-        </span>
-      )}
+      <div className="task-meta">
+        {task.priority && (
+          <span className={`priority-badge priority-${task.priority}`}>{task.priority}</span>
+        )}
+        {task.due_date && (
+          <span className={`due-badge ${dueStatus ? `due-${dueStatus}` : ''}`}>
+            {dueStatus === 'overdue' ? 'Overdue' : dueStatus === 'soon' ? 'Due soon' : task.due_date}
+          </span>
+        )}
+      </div>
     </div>
   );
 }
 
-// A single droppable column
 function Column({
   column,
   tasks,
@@ -71,10 +83,7 @@ function Column({
   const { setNodeRef, isOver } = useDroppable({ id: column.id });
 
   return (
-    <div
-      ref={setNodeRef}
-      className={`column ${isOver ? 'column-over' : ''}`}
-    >
+    <div ref={setNodeRef} className={`column ${isOver ? 'column-over' : ''}`}>
       <div className="column-header">
         <span>{column.title}</span>
         <span className="count">{tasks.length}</span>
@@ -97,7 +106,10 @@ function App() {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [tasksLoading, setTasksLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
   const [newTitle, setNewTitle] = useState('');
+  const [newPriority, setNewPriority] = useState('normal');
+  const [newDueDate, setNewDueDate] = useState('');
   const [creating, setCreating] = useState(false);
 
   useEffect(() => {
@@ -122,13 +134,18 @@ function App() {
     if (!newTitle.trim()) return;
 
     setCreating(true);
-    const { error } = await supabase
-      .from('tasks')
-      .insert({ title: newTitle.trim(), status: 'todo' });
+    const { error } = await supabase.from('tasks').insert({
+      title: newTitle.trim(),
+      status: 'todo',
+      priority: newPriority,
+      due_date: newDueDate || null,
+    });
 
     if (error) setError(error.message);
     else {
       setNewTitle('');
+      setNewPriority('normal');
+      setNewDueDate('');
       await loadTasks();
     }
     setCreating(false);
@@ -136,41 +153,42 @@ function App() {
 
   async function handleDragEnd(event: DragEndEvent) {
     const { active, over } = event;
-    if (!over) return; // dropped outside any column
+    if (!over) return;
 
     const taskId = active.id as string;
     const newStatus = over.id as string;
 
     const task = tasks.find((t) => t.id === taskId);
-    if (!task || task.status === newStatus) return; // no change needed
+    if (!task || task.status === newStatus) return;
 
-    // Optimistic update: change the UI immediately
-    setTasks((prev) =>
-      prev.map((t) => (t.id === taskId ? { ...t, status: newStatus } : t))
-    );
+    setTasks((prev) => prev.map((t) => (t.id === taskId ? { ...t, status: newStatus } : t)));
 
-    // Persist to Supabase
-    const { error } = await supabase
-      .from('tasks')
-      .update({ status: newStatus })
-      .eq('id', taskId);
+    const { error } = await supabase.from('tasks').update({ status: newStatus }).eq('id', taskId);
 
     if (error) {
       setError(error.message);
-      // revert on failure
-      setTasks((prev) =>
-        prev.map((t) => (t.id === taskId ? { ...t, status: task.status } : t))
-      );
+      setTasks((prev) => prev.map((t) => (t.id === taskId ? { ...t, status: task.status } : t)));
     }
   }
 
   if (authLoading) return <div className="centered">Loading...</div>;
   if (!session) return <div className="centered">Couldn't start a session. Please refresh.</div>;
 
+  const totalTasks = tasks.length;
+  const completedTasks = tasks.filter((t) => t.status === 'done').length;
+  const overdueTasks = tasks.filter((t) => getDueStatus(t.due_date, t.status) === 'overdue').length;
+
   return (
     <div className="board">
       <header className="board-header">
         <h1>Task Board</h1>
+        <div className="stats">
+          <span><strong>{totalTasks}</strong> total</span>
+          <span><strong>{completedTasks}</strong> completed</span>
+          <span className={overdueTasks > 0 ? 'stat-overdue' : ''}>
+            <strong>{overdueTasks}</strong> overdue
+          </span>
+        </div>
       </header>
 
       <form className="new-task-form" onSubmit={handleCreateTask}>
@@ -179,6 +197,17 @@ function App() {
           placeholder="Add a new task..."
           value={newTitle}
           onChange={(e) => setNewTitle(e.target.value)}
+          disabled={creating}
+        />
+        <select value={newPriority} onChange={(e) => setNewPriority(e.target.value)} disabled={creating}>
+          <option value="low">Low</option>
+          <option value="normal">Normal</option>
+          <option value="high">High</option>
+        </select>
+        <input
+          type="date"
+          value={newDueDate}
+          onChange={(e) => setNewDueDate(e.target.value)}
           disabled={creating}
         />
         <button type="submit" disabled={creating || !newTitle.trim()}>
