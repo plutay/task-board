@@ -7,6 +7,7 @@ import {
 } from '@dnd-kit/core';
 import { useAuth } from './AuthContext';
 import { supabase } from './supabaseClient';
+import { TaskDetailModal } from './TaskDetailModal';
 import './App.css';
 
 type Label = {
@@ -44,7 +45,7 @@ function getDueStatus(dueDate: string | null, status: string): 'overdue' | 'soon
   return null;
 }
 
-function TaskCard({ task }: { task: Task }) {
+function TaskCard({ task, onOpen }: { task: Task; onOpen: (task: Task) => void }) {
   const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({
     id: task.id,
   });
@@ -61,7 +62,16 @@ function TaskCard({ task }: { task: Task }) {
 
   return (
     <div ref={setNodeRef} style={style} {...listeners} {...attributes} className="task-card">
-      <p className="task-title">{task.title}</p>
+      <div className="task-card-top">
+        <p className="task-title">{task.title}</p>
+        <button
+          className="task-open-btn"
+          onPointerDown={(e) => e.stopPropagation()}
+          onClick={() => onOpen(task)}
+        >
+          Open
+        </button>
+      </div>
       {task.labels.length > 0 && (
         <div className="label-row">
           {task.labels.map((label) => (
@@ -89,10 +99,12 @@ function Column({
   column,
   tasks,
   loading,
+  onOpenTask,
 }: {
   column: { id: string; title: string };
   tasks: Task[];
   loading: boolean;
+  onOpenTask: (task: Task) => void;
 }) {
   const { setNodeRef, isOver } = useDroppable({ id: column.id });
 
@@ -108,7 +120,7 @@ function Column({
         ) : tasks.length === 0 ? (
           <p className="empty-state">No tasks yet</p>
         ) : (
-          tasks.map((task) => <TaskCard key={task.id} task={task} />)
+          tasks.map((task) => <TaskCard key={task.id} task={task} onOpen={onOpenTask} />)
         )}
       </div>
     </div>
@@ -126,6 +138,7 @@ function App() {
   const [newPriority, setNewPriority] = useState('normal');
   const [newDueDate, setNewDueDate] = useState('');
   const [creating, setCreating] = useState(false);
+  const [selectedLabelIds, setSelectedLabelIds] = useState<string[]>([]);
 
   const [newLabelName, setNewLabelName] = useState('');
 
@@ -133,6 +146,9 @@ function App() {
   const [searchQuery, setSearchQuery] = useState('');
   const [priorityFilter, setPriorityFilter] = useState('all');
   const [labelFilter, setLabelFilter] = useState('all');
+
+  // Task detail modal
+  const [selectedTask, setSelectedTask] = useState<Task | null>(null);
 
   useEffect(() => {
     if (!session) return;
@@ -147,7 +163,6 @@ function App() {
 
   async function loadTasks() {
     setTasksLoading(true);
-    // Fetch tasks along with their related labels via the join table
     const { data, error } = await supabase
       .from('tasks')
       .select('*, task_labels(labels(id, name, color))')
@@ -156,7 +171,6 @@ function App() {
     if (error) {
       setError(error.message);
     } else {
-      // Reshape the nested join result into a flat labels array per task
       const shaped = (data as any[]).map((t) => ({
         ...t,
         labels: t.task_labels.map((tl: any) => tl.labels).filter(Boolean),
@@ -166,23 +180,38 @@ function App() {
     setTasksLoading(false);
   }
 
+  async function logActivity(taskId: string, action: string) {
+    await supabase.from('task_activity').insert({ task_id: taskId, action });
+  }
+
   async function handleCreateTask(e: React.FormEvent) {
     e.preventDefault();
     if (!newTitle.trim()) return;
 
     setCreating(true);
-    const { error } = await supabase.from('tasks').insert({
-      title: newTitle.trim(),
-      status: 'todo',
-      priority: newPriority,
-      due_date: newDueDate || null,
-    });
+    const { data, error } = await supabase
+      .from('tasks')
+      .insert({
+        title: newTitle.trim(),
+        status: 'todo',
+        priority: newPriority,
+        due_date: newDueDate || null,
+      })
+      .select()
+      .single();
 
-    if (error) setError(error.message);
-    else {
+    if (error) {
+      setError(error.message);
+    } else {
+      if (selectedLabelIds.length > 0) {
+        const rows = selectedLabelIds.map((labelId) => ({ task_id: data.id, label_id: labelId }));
+        await supabase.from('task_labels').insert(rows);
+      }
+      await logActivity(data.id, 'Created task');
       setNewTitle('');
       setNewPriority('normal');
       setNewDueDate('');
+      setSelectedLabelIds([]);
       await loadTasks();
     }
     setCreating(false);
@@ -213,20 +242,23 @@ function App() {
     const task = tasks.find((t) => t.id === taskId);
     if (!task || task.status === newStatus) return;
 
+    const oldStatus = task.status;
     setTasks((prev) => prev.map((t) => (t.id === taskId ? { ...t, status: newStatus } : t)));
 
     const { error } = await supabase.from('tasks').update({ status: newStatus }).eq('id', taskId);
 
     if (error) {
       setError(error.message);
-      setTasks((prev) => prev.map((t) => (t.id === taskId ? { ...t, status: task.status } : t)));
+      setTasks((prev) => prev.map((t) => (t.id === taskId ? { ...t, status: oldStatus } : t)));
+    } else {
+      const columnTitle = (id: string) => COLUMNS.find((c) => c.id === id)?.title ?? id;
+      await logActivity(taskId, `Moved from ${columnTitle(oldStatus)} → ${columnTitle(newStatus)}`);
     }
   }
 
   if (authLoading) return <div className="centered">Loading...</div>;
   if (!session) return <div className="centered">Couldn't start a session. Please refresh.</div>;
 
-  // Apply search + filters before grouping into columns
   const filteredTasks = tasks.filter((t) => {
     const matchesSearch = t.title.toLowerCase().includes(searchQuery.toLowerCase());
     const matchesPriority = priorityFilter === 'all' || t.priority === priorityFilter;
@@ -270,6 +302,21 @@ function App() {
           onChange={(e) => setNewDueDate(e.target.value)}
           disabled={creating}
         />
+        <div className="label-picker">
+          {labels.map((l) => (
+            <label key={l.id} className="label-checkbox">
+              <input
+                type="checkbox"
+                checked={selectedLabelIds.includes(l.id)}
+                onChange={(e) => {
+                  if (e.target.checked) setSelectedLabelIds((prev) => [...prev, l.id]);
+                  else setSelectedLabelIds((prev) => prev.filter((id) => id !== l.id));
+                }}
+              />
+              <span className="label-chip" style={{ background: l.color }}>{l.name}</span>
+            </label>
+          ))}
+        </div>
         <button type="submit" disabled={creating || !newTitle.trim()}>
           {creating ? 'Adding...' : 'Add Task'}
         </button>
@@ -323,10 +370,15 @@ function App() {
               column={col}
               tasks={filteredTasks.filter((t) => t.status === col.id)}
               loading={tasksLoading}
+              onOpenTask={setSelectedTask}
             />
           ))}
         </div>
       </DndContext>
+
+      {selectedTask && (
+        <TaskDetailModal task={selectedTask} onClose={() => setSelectedTask(null)} />
+      )}
     </div>
   );
 }

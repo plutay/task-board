@@ -310,3 +310,127 @@ body {
   border-radius: 8px;
   font-size: 0.85rem;
 }
+
+.task-card-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 0.5rem;
+}
+
+.task-open-btn {
+  background: #f4f4f5;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  font-size: 0.7rem;
+  padding: 0.15rem 0.5rem;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.4);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.modal {
+  background: white;
+  border-radius: 12px;
+  padding: 1.5rem;
+  width: 480px;
+  max-height: 80vh;
+  overflow-y: auto;
+}
+
+.modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 1rem;
+}
+
+.modal-header h2 {
+  font-size: 1.1rem;
+  margin: 0;
+}
+
+.modal-close {
+  background: none;
+  border: none;
+  font-size: 1.4rem;
+  cursor: pointer;
+  color: #6b7280;
+  line-height: 1;
+}
+
+.modal-section {
+  margin-bottom: 1.25rem;
+}
+
+.modal-section h3 {
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: #6b7280;
+  margin-bottom: 0.6rem;
+}
+
+.comment-list, .activity-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  margin-bottom: 0.75rem;
+}
+
+.comment {
+  background: #f4f4f5;
+  border-radius: 8px;
+  padding: 0.6rem 0.75rem;
+}
+
+.comment p {
+  margin: 0 0 0.25rem;
+  font-size: 0.85rem;
+}
+
+.comment-time {
+  font-size: 0.72rem;
+  color: #9ca3af;
+}
+
+.activity-item {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.82rem;
+  color: #4b5563;
+  padding: 0.4rem 0;
+  border-bottom: 1px solid #f0f0f1;
+}
+
+.comment-form {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.comment-form input {
+  flex: 1;
+  padding: 0.5rem 0.7rem;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  font-size: 0.85rem;
+}
+
+.comment-form button {
+  padding: 0.5rem 0.9rem;
+  background: #111827;
+  color: white;
+  border: none;
+  border-radius: 8px;
+  font-size: 0.85rem;
+  cursor: pointer;
+}
