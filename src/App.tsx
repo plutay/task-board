@@ -9,6 +9,12 @@ import { useAuth } from './AuthContext';
 import { supabase } from './supabaseClient';
 import './App.css';
 
+type Label = {
+  id: string;
+  name: string;
+  color: string;
+};
+
 type Task = {
   id: string;
   title: string;
@@ -17,6 +23,7 @@ type Task = {
   priority: string;
   due_date: string | null;
   created_at: string;
+  labels: Label[];
 };
 
 const COLUMNS = [
@@ -26,14 +33,12 @@ const COLUMNS = [
   { id: 'done', title: 'Done' },
 ];
 
-// Returns 'overdue' | 'soon' | null based on due_date
 function getDueStatus(dueDate: string | null, status: string): 'overdue' | 'soon' | null {
   if (!dueDate || status === 'done') return null;
   const due = new Date(dueDate);
   const today = new Date();
   today.setHours(0, 0, 0, 0);
   const diffDays = Math.round((due.getTime() - today.getTime()) / 86400000);
-
   if (diffDays < 0) return 'overdue';
   if (diffDays <= 2) return 'soon';
   return null;
@@ -57,6 +62,15 @@ function TaskCard({ task }: { task: Task }) {
   return (
     <div ref={setNodeRef} style={style} {...listeners} {...attributes} className="task-card">
       <p className="task-title">{task.title}</p>
+      {task.labels.length > 0 && (
+        <div className="label-row">
+          {task.labels.map((label) => (
+            <span key={label.id} className="label-chip" style={{ background: label.color }}>
+              {label.name}
+            </span>
+          ))}
+        </div>
+      )}
       <div className="task-meta">
         {task.priority && (
           <span className={`priority-badge priority-${task.priority}`}>{task.priority}</span>
@@ -104,6 +118,7 @@ function Column({
 function App() {
   const { session, loading: authLoading } = useAuth();
   const [tasks, setTasks] = useState<Task[]>([]);
+  const [labels, setLabels] = useState<Label[]>([]);
   const [tasksLoading, setTasksLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -112,20 +127,42 @@ function App() {
   const [newDueDate, setNewDueDate] = useState('');
   const [creating, setCreating] = useState(false);
 
+  const [newLabelName, setNewLabelName] = useState('');
+
+  // Search & filter state
+  const [searchQuery, setSearchQuery] = useState('');
+  const [priorityFilter, setPriorityFilter] = useState('all');
+  const [labelFilter, setLabelFilter] = useState('all');
+
   useEffect(() => {
     if (!session) return;
     loadTasks();
+    loadLabels();
   }, [session]);
+
+  async function loadLabels() {
+    const { data, error } = await supabase.from('labels').select('*').order('created_at');
+    if (!error) setLabels(data as Label[]);
+  }
 
   async function loadTasks() {
     setTasksLoading(true);
+    // Fetch tasks along with their related labels via the join table
     const { data, error } = await supabase
       .from('tasks')
-      .select('*')
+      .select('*, task_labels(labels(id, name, color))')
       .order('created_at', { ascending: true });
 
-    if (error) setError(error.message);
-    else setTasks(data as Task[]);
+    if (error) {
+      setError(error.message);
+    } else {
+      // Reshape the nested join result into a flat labels array per task
+      const shaped = (data as any[]).map((t) => ({
+        ...t,
+        labels: t.task_labels.map((tl: any) => tl.labels).filter(Boolean),
+      }));
+      setTasks(shaped as Task[]);
+    }
     setTasksLoading(false);
   }
 
@@ -151,6 +188,21 @@ function App() {
     setCreating(false);
   }
 
+  async function handleCreateLabel(e: React.FormEvent) {
+    e.preventDefault();
+    if (!newLabelName.trim()) return;
+
+    const colors = ['#6366f1', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#06b6d4'];
+    const color = colors[labels.length % colors.length];
+
+    const { error } = await supabase.from('labels').insert({ name: newLabelName.trim(), color });
+    if (error) setError(error.message);
+    else {
+      setNewLabelName('');
+      await loadLabels();
+    }
+  }
+
   async function handleDragEnd(event: DragEndEvent) {
     const { active, over } = event;
     if (!over) return;
@@ -173,6 +225,14 @@ function App() {
 
   if (authLoading) return <div className="centered">Loading...</div>;
   if (!session) return <div className="centered">Couldn't start a session. Please refresh.</div>;
+
+  // Apply search + filters before grouping into columns
+  const filteredTasks = tasks.filter((t) => {
+    const matchesSearch = t.title.toLowerCase().includes(searchQuery.toLowerCase());
+    const matchesPriority = priorityFilter === 'all' || t.priority === priorityFilter;
+    const matchesLabel = labelFilter === 'all' || t.labels.some((l) => l.id === labelFilter);
+    return matchesSearch && matchesPriority && matchesLabel;
+  });
 
   const totalTasks = tasks.length;
   const completedTasks = tasks.filter((t) => t.status === 'done').length;
@@ -215,6 +275,44 @@ function App() {
         </button>
       </form>
 
+      <form className="new-label-form" onSubmit={handleCreateLabel}>
+        <input
+          type="text"
+          placeholder="New label name..."
+          value={newLabelName}
+          onChange={(e) => setNewLabelName(e.target.value)}
+        />
+        <button type="submit" disabled={!newLabelName.trim()}>Add Label</button>
+        <div className="label-list">
+          {labels.map((l) => (
+            <span key={l.id} className="label-chip" style={{ background: l.color }}>
+              {l.name}
+            </span>
+          ))}
+        </div>
+      </form>
+
+      <div className="filter-bar">
+        <input
+          type="text"
+          placeholder="Search tasks..."
+          value={searchQuery}
+          onChange={(e) => setSearchQuery(e.target.value)}
+        />
+        <select value={priorityFilter} onChange={(e) => setPriorityFilter(e.target.value)}>
+          <option value="all">All priorities</option>
+          <option value="low">Low</option>
+          <option value="normal">Normal</option>
+          <option value="high">High</option>
+        </select>
+        <select value={labelFilter} onChange={(e) => setLabelFilter(e.target.value)}>
+          <option value="all">All labels</option>
+          {labels.map((l) => (
+            <option key={l.id} value={l.id}>{l.name}</option>
+          ))}
+        </select>
+      </div>
+
       {error && <div className="error-banner">Error: {error}</div>}
 
       <DndContext onDragEnd={handleDragEnd}>
@@ -223,7 +321,7 @@ function App() {
             <Column
               key={col.id}
               column={col}
-              tasks={tasks.filter((t) => t.status === col.id)}
+              tasks={filteredTasks.filter((t) => t.status === col.id)}
               loading={tasksLoading}
             />
           ))}
